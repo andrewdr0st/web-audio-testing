@@ -5,13 +5,21 @@ const audioCtx = new AudioContext();
 
 const oscillators = new Map();
 const masterGain = new GainNode(audioCtx);
+const lowPassFilter = new BiquadFilterNode(audioCtx, {
+    filterType: "lowpass",
+    frequency: 1000
+});
 
 function setup() {
     createCanvas(windowWidth, windowHeight);
 
     piano = new Piano(windowWidth * 0.05, windowHeight * 0.25, windowWidth * 0.9, windowHeight * 0.5, 3, 3);
+
     masterGain.gain.setValueAtTime(0.15, audioCtx.currentTime);
     masterGain.connect(audioCtx.destination);
+    lowPassFilter.connect(masterGain);
+
+    cycleLowpass(true);
 
     noStroke();
 }
@@ -20,6 +28,17 @@ function draw() {
     background(120, 120, 120);
 
     piano.draw();
+}
+
+function cycleLowpass(b) {
+    if (b) {
+        lowPassFilter.frequency.linearRampToValueAtTime(5000, audioCtx.currentTime + 8);
+    } else {
+        lowPassFilter.frequency.linearRampToValueAtTime(1000, audioCtx.currentTime + 8);
+    }
+    setTimeout(() => {
+        cycleLowpass(!b);
+    }, 8000);
 }
 
 function playNote(pitch) {
@@ -31,18 +50,33 @@ function playNote(pitch) {
         type: "square",
         frequency: midiToFreq(pitch)
     });
-    osc.connect(masterGain);
+
+    const adsr = new GainNode(audioCtx);
+    adsr.gain.setValueAtTime(0, audioCtx.currentTime);
+    adsr.gain.linearRampToValueAtTime(1.0, audioCtx.currentTime + 0.025);
+    adsr.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.5);
+
+    osc.connect(adsr);
+    adsr.connect(lowPassFilter);
     osc.start();
 
-    oscillators.set(pitch, osc);
+    oscillators.set(pitch, {osc, adsr});
 }
 
 function stopNote(pitch) {
-    const osc = oscillators.get(pitch);
+    const {osc, adsr} = oscillators.get(pitch);
     if (osc) {
-        osc.stop();
-        osc.disconnect();
         oscillators.delete(pitch);
+
+        adsr.gain.cancelScheduledValues(audioCtx.currentTime);
+        adsr.gain.setValueAtTime(adsr.gain.value, audioCtx.currentTime);
+        adsr.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.75);
+        osc.stop(audioCtx.currentTime + 0.8);
+
+        setTimeout (() => {
+            osc.disconnect();
+            adsr.disconnect();
+        }, 800);
     }
 }
 
